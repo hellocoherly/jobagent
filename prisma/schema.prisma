@@ -1,0 +1,210 @@
+// Compass AI - core data model (Phase 1)
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Users & Profile
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  profile        Profile?
+  resumes        Resume[]
+  matches        Match[]
+  savedEmployers SavedEmployer[]
+  feedItems      OpportunityFeedItem[]
+}
+
+// The living professional profile the Career Agent maintains for a user.
+model Profile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  headline       String?
+  summary        String?
+  skills         String[] @default([])
+  experience     Json? // structured work history, e.g. [{ company, title, startDate, endDate, highlights[] }]
+  achievements   String[] @default([])
+  certifications String[] @default([])
+
+  careerGoals         String[] @default([])
+  preferredIndustries String[] @default([])
+  workStyle           String? // e.g. "remote-first", "hybrid", "in-office"
+
+  compMinExpectation Int? // annual, in USD
+  compMaxExpectation Int?
+
+  homeLatitude   Float?
+  homeLongitude  Float?
+  maxCommuteMins Int?
+  openToRelocate Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Resume {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fileName   String
+  mimeType   String
+  rawText    String // extracted text used for AI parsing
+  parsedData Json? // structured output from the AI profile-generation step
+
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Employers, Offices & Jobs
+// ---------------------------------------------------------------------------
+
+model Employer {
+  id   String @id @default(cuid())
+  name String
+  slug String @unique
+
+  website     String?
+  logoUrl     String?
+  industry    String?
+  description String?
+
+  atsProvider String? // "greenhouse" | "lever" | "ashby"
+  atsBoardId  String? // the org token/slug used to query the ATS public API
+
+  hiringScore Int? // 0-100, derived from hiring activity
+  growthRate  Float? // e.g. YoY headcount growth
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  offices Office[]
+  jobs    Job[]
+  savedBy SavedEmployer[]
+
+  @@index([atsProvider, atsBoardId])
+}
+
+model Office {
+  id         String   @id @default(cuid())
+  employerId String
+  employer   Employer @relation(fields: [employerId], references: [id], onDelete: Cascade)
+
+  label     String // e.g. "San Francisco HQ"
+  address   String?
+  city      String?
+  state     String?
+  country   String?
+  latitude  Float
+  longitude Float
+
+  isHybrid   Boolean @default(false)
+  isRemoteOk Boolean @default(false)
+  officeSize Int?
+
+  createdAt DateTime @default(now())
+
+  jobs Job[]
+
+  @@index([employerId])
+}
+
+model Job {
+  id         String   @id @default(cuid())
+  employerId String
+  employer   Employer @relation(fields: [employerId], references: [id], onDelete: Cascade)
+  officeId   String?
+  office     Office?  @relation(fields: [officeId], references: [id])
+
+  title       String
+  department  String?
+  description String?
+  seniority   String?
+  remoteType  String? // "remote" | "hybrid" | "onsite"
+
+  compMin  Int?
+  compMax  Int?
+  currency String @default("USD")
+
+  sourceUrl  String
+  externalId String // id from the ATS feed
+  postedAt   DateTime?
+
+  status    String   @default("open") // "open" | "closed"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matches Match[]
+
+  @@unique([employerId, externalId])
+  @@index([officeId])
+}
+
+// ---------------------------------------------------------------------------
+// AI Matching
+// ---------------------------------------------------------------------------
+
+model Match {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId  String
+  job    Job    @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  score           Int // 0-100 overall fit score
+  dimensionScores Json // { professionalFit, compensation, growthPotential, culture, commute, ... }
+  explanation     String // human-readable "why this role" explanation
+  tradeoffs       String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, jobId])
+  @@index([userId, score])
+}
+
+model SavedEmployer {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  employerId String
+  employer   Employer @relation(fields: [employerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, employerId])
+}
+
+// ---------------------------------------------------------------------------
+// Opportunity Feed
+// ---------------------------------------------------------------------------
+
+model OpportunityFeedItem {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  kind     String // "new_match" | "recruiter_interest" | "hiring_trend" | "market_value" | "profile_improvement"
+  title    String
+  body     String
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
